@@ -1,0 +1,41 @@
+name: Browser runtime
+
+on:
+  push:
+    branches: [gla-115-browser-runtime]
+  pull_request:
+    branches: [gla-115-upstream-0.11.1]
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_BUILD_TARGET: x86_64-unknown-linux-gnu
+  PHPANTOM_GIT_VERSION: 0.11.1
+
+jobs:
+  browser-runtime:
+    name: Browser runtime
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.99.0
+          components: clippy, rustfmt
+          targets: wasm32-wasip1
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: browser-runtime
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: cargo fmt --check --all
+      - run: cargo clippy --locked -p phpantom_lsp --features lsp-dispatch --lib --target x86_64-unknown-linux-gnu -- -D warnings
+      - run: cargo clippy --locked -p phpantom-runtime-wrapper --all-targets --target x86_64-unknown-linux-gnu -- -D warnings
+      - run: cargo test --locked -p phpantom-runtime-wrapper --test public_lsp --target x86_64-unknown-linux-gnu -- --nocapture
+      - name: Build the browser runtime wrapper
+        run: cargo build --locked -p phpantom-runtime-wrapper --profile wasm-release --target wasm32-wasip1
+      - name: Smoke-test the wrapper reactor
+        run: node scripts/wasm-smoke-test.mjs target/wasm32-wasip1/wasm-release/phpantom_runtime_wrapper.wasm
