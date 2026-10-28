@@ -617,6 +617,7 @@ pub(crate) fn merge_param_docblock_into_parameters(
     info: &DocblockInfo,
     parameters: &mut Vec<ParameterInfo>,
     template_bounds: &crate::atom::AtomMap<PhpType>,
+    excluded_parameter_names: &[crate::atom::Atom],
 ) {
     for param in parameters.iter_mut() {
         let param_doc_type = extract_param_raw_type_from_info(info, &param.name);
@@ -699,7 +700,11 @@ pub(crate) fn merge_param_docblock_into_parameters(
     // These document parameters accessed via `func_get_args()` or
     // similar mechanisms and should appear in hover/signature.
     for (tag_name, tag_type) in extract_all_param_tags_from_info(info) {
-        if !parameters.iter().any(|p| p.name == tag_name) {
+        if !parameters.iter().any(|p| p.name == tag_name)
+            && !excluded_parameter_names
+                .iter()
+                .any(|name| name.as_str() == tag_name)
+        {
             let description = extract_param_description_from_info(info, &tag_name);
             parameters.push(ParameterInfo {
                 name: atom(&tag_name),

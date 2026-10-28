@@ -31,6 +31,11 @@ impl Backend {
         position: Position,
         ctx: &FileContext,
     ) -> Vec<CompletionItem> {
+        // Named arguments are PHP 8.0 syntax and must not be suggested for older targets.
+        if self.php_version() < crate::types::PhpVersion::new(8, 0) {
+            return Vec::new();
+        }
+
         // ── Primary path: AST-based detection via symbol map ────────
         // The symbol map's `CallSite` data handles chains, nesting,
         // and strings correctly.  Fall back to text scanning when the

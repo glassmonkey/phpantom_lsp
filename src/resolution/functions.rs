@@ -187,11 +187,14 @@ impl Backend {
     /// Parse the embedded stub file that declares the function `name`,
     /// cache everything it declares, and return that function.
     ///
-    /// Every function in the file goes into `global_functions` under the
-    /// file's stub URI, corrected by [`crate::stub_patches`], so a later
-    /// lookup of any of them is answered by Phase 1.  The classes the file
-    /// declares are cached in `uri_classes_index` under the same URI, so a
-    /// type one of its functions names (a return type, say) resolves too.
+    /// Every available function in the file goes into `global_functions`
+    /// under the file's stub URI, corrected by [`crate::stub_patches`], so a
+    /// later lookup of any of them is answered by Phase 1. Functions newer
+    /// than the configured PHP version must stay out of this cache as well
+    /// as `stub_function_index`, or completion can rediscover them here. The
+    /// classes the file declares are cached in `uri_classes_index` under the
+    /// same URI, so a type one of its functions names (a return type, say)
+    /// resolves too.
     ///
     /// `None` when the file declares no function spelled `name`.
     fn load_stub_function(&self, name: &str, stub_content: &str) -> Option<FunctionInfo> {
@@ -200,6 +203,16 @@ impl Backend {
         let _parse_guard = crate::parser::with_parse_cache(stub_content);
         let ver = Some(self.php_version());
         let mut functions = self.parse_functions_versioned(stub_content, ver);
+        let unavailable = crate::stubs::unavailable_stub_names(
+            stub_content,
+            crate::stubs::embedded_stub_path(stub_content),
+            self.php_version(),
+        );
+        functions.retain(|function| {
+            !unavailable.as_ref().is_some_and(|names| {
+                names.contains(crate::stubs::StubSymbolKind::Function, &function.name)
+            })
+        });
         if functions.is_empty() {
             return None;
         }

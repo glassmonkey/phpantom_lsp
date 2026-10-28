@@ -50,6 +50,7 @@ pub(super) fn extract_method<'a>(
     }
     let Signature {
         mut parameters,
+        excluded_parameter_names,
         native_return_type,
         return_type,
         conditional_return,
@@ -92,6 +93,7 @@ pub(super) fn extract_method<'a>(
                 },
                 &method_template_param_bounds,
             ),
+            &excluded_parameter_names,
         );
     }
 

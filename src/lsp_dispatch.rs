@@ -17,6 +17,7 @@ use tower_lsp_server::gen_lsp_types::{
 };
 
 use crate::Backend;
+use crate::types::PhpVersion;
 use std::sync::Arc;
 
 /// JSON-RPC error codes we return, from the LSP specification.
@@ -45,6 +46,31 @@ impl LspDispatcher {
         }
     }
 
+    /// Apply the target PHP version before the first LSP request.
+    fn configure_php_version(&self, params: &Value) -> Result<(), String> {
+        let Some(version) = params
+            .get("initializationOptions")
+            .and_then(|options| options.get("phpVersion"))
+        else {
+            return Ok(());
+        };
+        let version = version
+            .as_str()
+            .ok_or_else(|| "initializationOptions.phpVersion must be a string.".to_string())?;
+        let version = PhpVersion::from_composer_constraint(version)
+            .ok_or_else(|| "initializationOptions.phpVersion must be major.minor.".to_string())?;
+        if !matches!(
+            (version.major, version.minor),
+            (5, 6) | (7, 0..=4) | (8, 0..=5)
+        ) {
+            return Err(format!(
+                "PHPantom supports PHP 5.6, 7.0–7.4, and 8.0–8.5; received {version}."
+            ));
+        }
+        self.backend.set_php_version(version);
+        Ok(())
+    }
+
     /// Handle one LSP JSON-RPC message. Returns a JSON-RPC response string for
     /// requests, or `None` for notifications (which produce no reply).
     pub fn handle(&self, message: &str) -> Option<String> {
@@ -54,7 +80,10 @@ impl LspDispatcher {
         let params = value.get("params").cloned().unwrap_or(Value::Null);
 
         let outcome: Outcome = match method {
-            "initialize" => Some(Ok(self.capabilities())),
+            "initialize" => match self.configure_php_version(&params) {
+                Ok(()) => Some(Ok(self.capabilities())),
+                Err(message) => Some(Err((INVALID_PARAMS, message))),
+            },
             "shutdown" => Some(Ok(Value::Null)),
             "initialized" | "exit" | "$/cancelRequest" => None,
             "textDocument/didOpen" => {
@@ -275,7 +304,7 @@ impl LspDispatcher {
             // can tell which build it is talking to.
             "serverInfo": {
                 "name": self.backend.name,
-                "version": self.backend.version,
+                "version": format!("{}+php-version-setting.3:php{}", self.backend.version, self.backend.php_version()),
             }
         })
     }
