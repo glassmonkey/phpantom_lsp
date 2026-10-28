@@ -278,7 +278,10 @@ mod inlay_hints;
 /// LSP JSON-RPC dispatch for the wasm build, which has no tower-lsp transport.
 /// Kept free of any target-specific code so the marshalling in `wasm_wasi` is
 /// the only thing a future non-WASI wasm target would have to replace.
-#[cfg(all(target_arch = "wasm32", target_os = "wasi"))]
+#[cfg(any(
+    feature = "lsp-dispatch",
+    all(target_arch = "wasm32", target_os = "wasi")
+))]
 mod lsp_dispatch;
 mod mago;
 #[cfg(feature = "mem-audit")]
@@ -333,6 +336,8 @@ pub(crate) mod virtual_members;
 /// target miscompiles the completion path (see `docs/wasm.md`).
 #[cfg(all(target_arch = "wasm32", target_os = "wasi"))]
 mod wasm_wasi;
+#[cfg(all(target_arch = "wasm32", target_os = "wasi"))]
+pub use wasm_wasi::{lsp_alloc, lsp_dealloc, lsp_handle, lsp_response_len};
 mod workspace_env;
 mod workspace_symbols;
 
@@ -346,6 +351,8 @@ pub mod test_fixtures;
 pub use backend::package_origin::ClassCompletionOrigin;
 pub use class_lookup::Fqn;
 pub use completion::target::extract_completion_target;
+#[cfg(feature = "lsp-dispatch")]
+pub use lsp_dispatch::LspDispatcher;
 pub use types::{AccessKind, ClassInfo, DefineInfo, FunctionInfo, NamespaceSpan, Visibility};
 pub use virtual_members::resolve_class_fully;
 

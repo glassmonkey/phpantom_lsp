@@ -121,6 +121,7 @@ impl Backend {
                 Statement::Function(func) => {
                     let Some(Signature {
                         mut parameters,
+                        excluded_parameter_names,
                         native_return_type,
                         return_type,
                         conditional_return,
@@ -188,6 +189,7 @@ impl Backend {
                             info,
                             &mut parameters,
                             &func_template_param_bounds,
+                            &excluded_parameter_names,
                         );
                     }
 
@@ -468,5 +470,106 @@ impl Backend {
             }
         }
         None
+    }
+}
+
+#[cfg(test)]
+mod parameter_version_reconstruction_tests {
+    use crate::{Backend, types::PhpVersion};
+
+    const SOURCE: &str = r#"<?php
+/**
+ * @param bool $before_needle Available from PHP 8.3.
+ * @param non-empty-string $stable Retained native parameter enrichment.
+ * @param bool $before_needle Available from PHP 8.3.
+ * @param string $virtualOption Extra argument read through func_get_args().
+ */
+function runtime_parameter_fixture(string $stable, #[\JetBrains\PhpStorm\Internal\PhpStormStubsElementAvailable(from: '8.3')] bool $before_needle = false): void {
+    func_get_args();
+}
+
+class RuntimeParameterFixture {
+    /**
+     * @param non-empty-string $stable Retained native parameter enrichment.
+     * @param bool $before_needle Available from PHP 8.3.
+     * @param string $virtualOption An unrelated virtual method parameter.
+     */
+    public function run(string $stable, #[\JetBrains\PhpStorm\Internal\PhpStormStubsElementAvailable(from: '8.3')] bool $before_needle = false): void { func_get_args(); }
+}
+"#;
+
+    fn has_parameter(parameters: &[crate::types::ParameterInfo], name: &str) -> bool {
+        parameters
+            .iter()
+            .any(|parameter| parameter.name.as_str() == name)
+    }
+
+    #[test]
+    fn docblock_merge_does_not_restore_excluded_native_parameters() {
+        for (version, expected_native) in [
+            (PhpVersion::new(8, 0), false),
+            (PhpVersion::new(8, 3), true),
+        ] {
+            let functions =
+                Backend::test_defaults().parse_functions_versioned(SOURCE, Some(version));
+            let function = functions
+                .iter()
+                .find(|function| function.name.as_str() == "runtime_parameter_fixture")
+                .unwrap();
+            assert_eq!(
+                has_parameter(&function.parameters, "$before_needle"),
+                expected_native,
+                "function at {version:?}"
+            );
+            assert!(
+                has_parameter(&function.parameters, "$virtualOption"),
+                "virtual @param retained at {version:?}"
+            );
+            assert_eq!(
+                function
+                    .parameters
+                    .iter()
+                    .find(|parameter| parameter.name.as_str() == "$stable")
+                    .unwrap()
+                    .type_hint
+                    .as_ref()
+                    .unwrap()
+                    .to_string(),
+                "non-empty-string",
+                "native docblock enrichment retained at {version:?}"
+            );
+
+            let classes = Backend::parse_php_versioned(SOURCE, Some(version));
+            let method = classes
+                .iter()
+                .find(|class| class.name.as_str() == "RuntimeParameterFixture")
+                .unwrap()
+                .methods
+                .iter()
+                .find(|method| method.name.as_str() == "run")
+                .unwrap();
+            assert_eq!(
+                has_parameter(&method.parameters, "$before_needle"),
+                expected_native,
+                "method at {version:?}"
+            );
+            assert!(
+                has_parameter(&method.parameters, "$virtualOption"),
+                "unrelated method @param retained at {version:?}"
+            );
+            assert_eq!(
+                method
+                    .parameters
+                    .iter()
+                    .find(|parameter| parameter.name.as_str() == "$stable")
+                    .unwrap()
+                    .type_hint
+                    .as_ref()
+                    .unwrap()
+                    .to_string(),
+                "non-empty-string",
+                "method native docblock enrichment retained at {version:?}"
+            );
+        }
     }
 }

@@ -119,7 +119,13 @@ impl Backend {
         let mut is_removed = |source: &'static str, name: &str, kind: stubs::StubSymbolKind| {
             removed_by_file
                 .entry(source.as_ptr() as usize)
-                .or_insert_with(|| stubs::removed_stub_names(source, version))
+                .or_insert_with(|| {
+                    stubs::unavailable_stub_names(
+                        source,
+                        stubs::embedded_stub_path(source),
+                        version,
+                    )
+                })
                 .as_ref()
                 .is_some_and(|names| names.contains(kind, name))
         };

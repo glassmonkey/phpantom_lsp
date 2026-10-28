@@ -108,6 +108,22 @@ pub fn build_stub_function_index() -> HashMap<&'static str, &'static str> {
         .collect()
 }
 
+/// Return the bundled stub file path for a source embedded in this build.
+/// User documents cannot match because only `STUB_FILES` are searched.
+pub(crate) fn embedded_stub_path(source: &str) -> Option<&'static str> {
+    STUB_FILES
+        .iter()
+        .position(|stub| std::ptr::eq(stub.as_ptr(), source.as_ptr()))
+        .map(|index| STUB_FILE_PATHS[index])
+}
+
+/// Whether phpstorm-stubs' pinned PHP core files describe PHP runtime
+/// symbols. Extension directories can use `@since` for extension releases,
+/// so they are deliberately excluded from PHP-version interpretation.
+fn is_php_core_function_stub(path: &str) -> bool {
+    path == "Core/Core.php" || path == "Core/Core_c.php" || path.starts_with("standard/standard_")
+}
+
 /// Short names of the declarations in one stub file whose docblock marks
 /// them `@removed` at or before a given PHP version.
 #[derive(Debug, Default)]
@@ -170,6 +186,67 @@ pub fn removed_stub_names(
         }
     }
     (!names.is_empty()).then_some(names)
+}
+
+/// Stub names unavailable in a target PHP version because they were removed
+/// or introduced in a later PHP release.
+pub fn unavailable_stub_names<'a>(
+    source: &'a str,
+    path: Option<&str>,
+    php_version: crate::types::PhpVersion,
+) -> Option<RemovedStubNames<'a>> {
+    let mut names = removed_stub_names(source, php_version).unwrap_or_default();
+    if !path.is_some_and(is_php_core_function_stub) {
+        return (!names.is_empty()).then_some(names);
+    }
+    let mut search_from = 0;
+    while let Some(rel) = source[search_from..].find("@since") {
+        let tag_pos = search_from + rel;
+        let Some(doc_end) = source[tag_pos..].find("*/").map(|p| tag_pos + p + 2) else {
+            break;
+        };
+        search_from = doc_end;
+        let Some(doc_start) = source[..tag_pos].rfind("/**") else {
+            continue;
+        };
+        if !docblock_introduced_after_php_8(&source[doc_start..doc_end], php_version) {
+            continue;
+        }
+        let after = &source[doc_end..];
+        let after = &after[..after.find("/**").unwrap_or(after.len())];
+        if let Some((kind, name)) = first_declaration(after) {
+            match kind {
+                StubSymbolKind::Function => names.functions.insert(name),
+                StubSymbolKind::Class => names.classes.insert(name),
+                StubSymbolKind::Constant => names.constants.insert(name),
+            };
+        }
+    }
+    (!names.is_empty()).then_some(names)
+}
+
+/// Interpret exact PHP `@since X.Y` tags only in pinned PHP core stubs.
+/// Extension stubs can use `@since` for extension releases, so their symbols
+/// remain available. Unknown formats also remain available.
+fn docblock_introduced_after_php_8(docblock: &str, php_version: crate::types::PhpVersion) -> bool {
+    docblock.lines().any(|line| {
+        let trimmed = line.trim().trim_start_matches('*').trim();
+        let Some(rest) = trimmed.strip_prefix("@since") else {
+            return false;
+        };
+        let token = rest.trim();
+        let token = token.strip_prefix("PHP").unwrap_or(token).trim();
+        let token = token.split_whitespace().next().unwrap_or("");
+        let mut parts = token.split('.');
+        let (Some(major), Some(minor), None) = (parts.next(), parts.next(), parts.next()) else {
+            return false;
+        };
+        let (Ok(major), Ok(minor)) = (major.parse::<u8>(), minor.parse::<u8>()) else {
+            return false;
+        };
+        let introduced = crate::types::PhpVersion { major, minor };
+        introduced > php_version
+    })
 }
 
 /// Whether a docblock carries an `@removed X.Y` tag with
@@ -298,6 +375,31 @@ define('MCRYPT_ENCRYPT', 0);
     fn undocumented_constant_does_not_inherit_previous_docblock() {
         let source = "<?php\n/**\n * @removed 8.0\n */\ndefine('ASSERT_QUIET_EVAL', 5);\ndefine('ASSERT_EXCEPTION', 5);\n";
         assert_eq!(removed_constants(source, PHP_8_0), ["ASSERT_QUIET_EVAL"]);
+    }
+
+    #[test]
+    fn function_since_php_8_is_filtered_before_its_release() {
+        let source = "<?php\n/**\n * @since 8.0\n */\nfunction str_contains() {}\n";
+        assert!(
+            unavailable_stub_names(source, Some("Core/Core.php"), PHP_7_4)
+                .is_some_and(|names| names.functions.contains("str_contains"))
+        );
+        assert!(unavailable_stub_names(source, Some("Core/Core.php"), PHP_8_0).is_none());
+        assert!(unavailable_stub_names(source, Some("Core/Core.php"), PHP_8_4).is_none());
+    }
+
+    #[test]
+    fn extension_release_since_is_not_treated_as_php_version() {
+        let source = "<?php\n/**\n * @since 2.3.0\n */\nfunction extension_api() {}\n";
+        assert!(unavailable_stub_names(source, Some("curl/curl.php"), PHP_7_4).is_none());
+    }
+
+    #[test]
+    fn unknown_since_version_and_extension_since_are_retained() {
+        let unknown = "<?php\n/**\n * @since next release\n */\nfunction future_api() {}\n";
+        let extension = "<?php\n/**\n * @since 8.5\n */\nfunction extension_api() {}\n";
+        assert!(unavailable_stub_names(unknown, Some("Core/Core.php"), PHP_7_4).is_none());
+        assert!(unavailable_stub_names(extension, Some("curl/curl.php"), PHP_7_4).is_none());
     }
 
     #[test]

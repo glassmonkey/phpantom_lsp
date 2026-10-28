@@ -296,6 +296,18 @@ fn generate_stub_map(stubs_path: &Path) {
     }
     out.push_str("];\n\n");
 
+    // Keep source paths beside embedded contents so runtime availability
+    // checks can distinguish PHP's bundled core stubs from extension stubs.
+    out.push_str("/// Paths corresponding to [`STUB_FILES`].\n");
+    out.push_str(&format!(
+        "pub(crate) static STUB_FILE_PATHS: [&str; {}] = [\n",
+        existing_files.len()
+    ));
+    for rel_path in &existing_files {
+        out.push_str(&format!("    \"{}\",\n", escape(rel_path)));
+    }
+    out.push_str("];\n\n");
+
     // 2. Class name → file index mapping.
     let class_entries: Vec<(&str, usize)> = class_map
         .iter()

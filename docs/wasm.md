@@ -14,6 +14,21 @@ run against unreleased changes.
 
 ## Build
 
+The browser runtime workspace builds the WASI module through the small Cargo
+wrapper crate. It uses the same synchronous dispatcher as the WASI exports and
+keeps the ABI implementation in PHPantom:
+
+```bash
+cargo build --locked -p phpantom-runtime-wrapper \
+    --profile wasm-release --target wasm32-wasip1
+```
+
+This produces `target/wasm32-wasip1/wasm-release/phpantom_runtime_wrapper.wasm`.
+Smoke-test that artifact with
+`node scripts/wasm-smoke-test.mjs target/wasm32-wasip1/wasm-release/phpantom_runtime_wrapper.wasm`.
+
+To build the PHPantom library directly, use:
+
 ```bash
 rustup target add wasm32-wasip1
 

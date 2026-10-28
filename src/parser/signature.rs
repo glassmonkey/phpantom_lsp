@@ -15,13 +15,16 @@ use crate::types::ParameterInfo;
 
 use super::{
     DocblockCtx, apply_array_shape_override, extract_hint_type, extract_language_level_type,
-    extract_parameters, is_available_for_version, is_removed_for_version,
+    extract_parameters, is_available_for_version, is_param_available_for_version,
+    is_removed_for_version,
 };
 
 /// The pieces of a function or method signature computed by
 /// [`extract_signature`].
 pub(super) struct Signature<'a> {
     pub parameters: Vec<ParameterInfo>,
+    /// Native parameter names removed by the target-version filter.
+    pub excluded_parameter_names: Vec<Atom>,
     /// The native return hint, or the `#[LanguageLevelTypeAware]` type
     /// that replaces it for the target PHP version.
     pub native_return_type: Option<PhpType>,
@@ -68,6 +71,16 @@ pub(super) fn extract_signature<'a>(
         return None;
     }
 
+    let excluded_parameter_names = if let (Some(ctx), Some(ver)) = (doc_ctx, php_version) {
+        parameter_list
+            .parameters
+            .iter()
+            .filter(|param| !is_param_available_for_version(param, ctx, ver))
+            .map(|param| atom(crate::atom::bytes_to_str(param.variable.name)))
+            .collect()
+    } else {
+        Vec::new()
+    };
     let parameters = extract_parameters(
         parameter_list,
         doc_ctx.map(|ctx| ctx.content),
@@ -100,6 +113,7 @@ pub(super) fn extract_signature<'a>(
         let return_type = finish_return_type(native_return_type.clone(), attribute_lists, doc_ctx);
         return Some(Signature {
             parameters,
+            excluded_parameter_names,
             native_return_type,
             return_type,
             conditional_return: None,
@@ -199,6 +213,7 @@ pub(super) fn extract_signature<'a>(
 
     Some(Signature {
         parameters,
+        excluded_parameter_names,
         native_return_type,
         return_type,
         conditional_return,
