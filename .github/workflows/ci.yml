@@ -4,7 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
-    branches: [main]
+    branches: [main, gla-115-upstream-0.11.1]
 
 env:
   CARGO_TERM_COLOR: always
@@ -15,6 +15,31 @@ env:
   CARGO_BUILD_TARGET: x86_64-unknown-linux-musl
 
 jobs:
+  runtime-wrapper:
+    name: Browser runtime wrapper
+    runs-on: ubuntu-latest
+    env:
+      PHPANTOM_GIT_VERSION: 0.11.1
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.99.0
+          components: clippy, rustfmt
+          targets: wasm32-wasip1
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: runtime-wrapper
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: cargo clippy -p phpantom_lsp --features lsp-dispatch --lib -- -D warnings
+      - run: cargo test --locked -p phpantom-runtime-wrapper --test public_lsp -- --nocapture
+      - name: Build the browser runtime wrapper
+        run: cargo build --locked -p phpantom-runtime-wrapper --profile wasm-release --target wasm32-wasip1
+      - name: Smoke-test the wrapper reactor
+        run: node scripts/wasm-smoke-test.mjs target/wasm32-wasip1/wasm-release/phpantom_runtime_wrapper.wasm
+
   lint:
     name: Lint
     runs-on: ubuntu-latest
